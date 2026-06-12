@@ -157,23 +157,34 @@ var Analysis = {
 
     var chartSheetName = 'Performance Chart';
     var chartSheet = ss.getSheetByName(chartSheetName);
+    var rawHeader = ['Date', 'StratVal', 'Cost', Constants.BENCHMARK];
+    Constants.TICKERS.forEach(function(t) { rawHeader.push(t); });
     if (chartSheet) {
       var lastCol = chartSheet.getLastColumn();
+      var shouldDelete = false;
       if (lastCol > 0) {
-         var headers = chartSheet.getRange(1, 1, 1, lastCol).getValues()[0];
-         if (headers.indexOf('StratYTD') !== -1) {
-            ss.deleteSheet(chartSheet);
-            chartSheet = null;
-         }
+          var headers = chartSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+          if (headers.indexOf('StratYTD') !== -1) {
+             shouldDelete = true;
+          } else {
+             // Check if headers match rawHeader
+             for (var col = 0; col < rawHeader.length; col++) {
+                 if (headers[col] !== rawHeader[col]) {
+                     shouldDelete = true;
+                     break;
+                 }
+             }
+          }
       } else {
+         shouldDelete = true;
+      }
+      if (shouldDelete) {
          ss.deleteSheet(chartSheet);
          chartSheet = null;
       }
     }
     if (!chartSheet) {
       chartSheet = ss.insertSheet(chartSheetName);
-      var rawHeader = ['Date', 'StratVal', 'Cost', Constants.BENCHMARK];
-      Constants.TICKERS.forEach(function(t) { rawHeader.push(t); });
       chartSheet.getRange(1, 1, 1, rawHeader.length).setValues([rawHeader]);
     }
 
@@ -298,7 +309,7 @@ var Analysis = {
   _renderChart: function(ss, chartSheet, cacheData) {
       if (!cacheData || cacheData.length < 2) return;
       
-      var rawHeader = cacheData[0];
+      var rawColCount = 4 + Constants.TICKERS.length;
       var spyIdx = 3; 
       
       var dailySeries = [];
@@ -309,74 +320,151 @@ var Analysis = {
           var d = new Date(row[0]);
           if (isNaN(d.getTime())) continue; // Skip invalid dates
           
+          var tickerPrices = {};
+          Constants.TICKERS.forEach(function(t, idx) {
+              tickerPrices[t] = Number(row[4 + idx]);
+          });
+          
           dailySeries.push({
               date: d,
               stratVal: Number(row[1]),
-              spyPrice: Number(row[spyIdx])
+              spyPrice: Number(row[spyIdx]),
+              tickerPrices: tickerPrices
           });
       }
       
       if (dailySeries.length === 0) return;
 
+      // Sort chronologically
+      dailySeries.sort(function(a, b) {
+          return a.date.getTime() - b.date.getTime();
+      });
+ 
       // 2. Calculate Annual Returns
       var annualData = {};
       dailySeries.forEach(function(d) {
           var year = d.date.getFullYear();
-          if (!annualData[year]) annualData[year] = { startStrat: d.stratVal, endStrat: d.stratVal, startSpy: d.spyPrice, endSpy: d.spyPrice };
+          if (!annualData[year]) {
+              annualData[year] = { 
+                  startStrat: d.stratVal, 
+                  endStrat: d.stratVal, 
+                  startSpy: d.spyPrice, 
+                  endSpy: d.spyPrice,
+                  startTickers: {},
+                  endTickers: {}
+              };
+              Constants.TICKERS.forEach(function(t) {
+                  annualData[year].startTickers[t] = d.tickerPrices[t];
+                  annualData[year].endTickers[t] = d.tickerPrices[t];
+              });
+          }
           annualData[year].endStrat = d.stratVal;
           annualData[year].endSpy = d.spyPrice;
+          Constants.TICKERS.forEach(function(t) {
+              annualData[year].endTickers[t] = d.tickerPrices[t];
+          });
       });
       
       var chartRows = [['年份', '我的策略', Constants.BENCHMARK]];
+      Constants.TICKERS.forEach(function(t) {
+          chartRows[0].push(t + ' 100%');
+      });
+      
       var years = Object.keys(annualData).sort();
       
       years.forEach(function(y) {
           var data = annualData[y];
           var stratRet = (data.startStrat > 0) ? (data.endStrat - data.startStrat) / data.startStrat : 0;
-          var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.spyPrice : 0; // Wait, endSpy - startSpy is return
-          // Wait! Let's check calculation of spyRet: (endSpy - startSpy) / startSpy. 
-          // Ah, in previous line: `var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.startSpy : 0;` Let's use startSpy!
           var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.startSpy : 0;
-          chartRows.push([y, stratRet, spyRet]);
+          var row = [y, stratRet, spyRet];
+          Constants.TICKERS.forEach(function(t) {
+              var startPrice = data.startTickers[t];
+              var endPrice = data.endTickers[t];
+              var ret = (startPrice > 0) ? (endPrice - startPrice) / startPrice : 0;
+              row.push(ret);
+          });
+          chartRows.push(row);
+      });
+
+      // 3. Calculate Drawdowns
+      var maxStrat = 0;
+      var maxSpy = 0;
+      var ddRows = [['日期', '策略回撤', Constants.BENCHMARK + '回撤']];
+      
+      dailySeries.forEach(function(d) {
+          if (d.stratVal > maxStrat) maxStrat = d.stratVal;
+          if (d.spyPrice > maxSpy) maxSpy = d.spyPrice;
+          
+          var stratDD = (maxStrat > 0) ? (maxStrat - d.stratVal) / maxStrat : 0;
+          var spyDD = (maxSpy > 0) ? (maxSpy - d.spyPrice) / maxSpy : 0;
+          
+          ddRows.push([d.date, -stratDD, -spyDD]);
       });
       
-      // 3. Draw Annual Return Line Chart
-      chartSheet.hideColumns(1, rawHeader.length);
-      var startVisualCol = rawHeader.length + 2; 
+      // 4. Hide raw daily data columns
+      chartSheet.hideColumns(1, rawColCount);
+      var startVisualCol = rawColCount + 2; 
       
       // Clear visual columns range (getMaxRows to handle entire sheet length)
       var maxRows = chartSheet.getMaxRows();
-      chartSheet.getRange(1, startVisualCol, maxRows, 20).clear(); 
+      chartSheet.getRange(1, startVisualCol, maxRows, 25).clear(); 
       
+      // Write Annual Return Data
       var chartDataRange = chartSheet.getRange(1, startVisualCol, chartRows.length, chartRows[0].length);
       chartDataRange.setValues(chartRows);
       
-      // Format Data columns as Percentage
+      // Format Annual Return columns as Percentage
       if (chartRows.length > 1) {
-           chartSheet.getRange(2, startVisualCol + 1, chartRows.length - 1, 2).setNumberFormat('0.00%');
+           chartSheet.getRange(2, startVisualCol + 1, chartRows.length - 1, chartRows[0].length - 1).setNumberFormat('0.00%');
       }
       // Format Year as text
       chartSheet.getRange(2, startVisualCol, chartRows.length - 1, 1).setNumberFormat('@');
+
+      // Write Drawdown Data (shifted dynamically to prevent overlap)
+      var ddStartCol = startVisualCol + chartRows[0].length + 1; // leave 1 empty column space
+      var ddDataRange = chartSheet.getRange(1, ddStartCol, ddRows.length, 3);
+      ddDataRange.setValues(ddRows);
+
+      // Format Drawdown columns
+      if (ddRows.length > 1) {
+          chartSheet.getRange(2, ddStartCol, ddRows.length - 1, 1).setNumberFormat('yyyy-mm-dd');
+          chartSheet.getRange(2, ddStartCol + 1, ddRows.length - 1, 2).setNumberFormat('0.00%');
+      }
       
-      // Position the chart side-by-side with annual data (placed at Column J)
+      // Create Annual Performance Column Chart
       var chartBuilder = chartSheet.newChart()
-         .setChartType(Charts.ChartType.LINE)
+         .setChartType(Charts.ChartType.COLUMN)
          .addRange(chartDataRange)
          .setNumHeaders(1)
-         .setPosition(2, startVisualCol + 4, 0, 0)
-         .setOption('title', '年度報酬率比較 (策略 vs ' + Constants.BENCHMARK + ')')
+         .setPosition(2, ddStartCol + 4, 0, 0)
+         .setOption('title', '年度報酬率比較 (策略 vs ' + Constants.BENCHMARK + ' vs Tickers)')
          .setOption('hAxis.title', '年份')
          .setOption('vAxis.title', '年度報酬率 (%)')
          .setOption('width', 1000)
-         .setOption('height', 600)
+         .setOption('height', 500)
          .setOption('legend', { position: 'top', textStyle: { fontSize: 11 } })
-         .setOption('colors', ['#00008B', '#FFA500']); // Blue for Strategy, Orange for SPY
+         .setOption('colors', ['#1E3A8A', '#F59E0B', '#10B981', '#EC4899', '#8B5CF6']); // Strategy (Navy Blue), SPY (Amber), SPMO (Emerald Green), VCR (Vibrant Pink), VDC (Deep Violet)
+
+      // Create Drawdown Line Chart
+      var ddChartBuilder = chartSheet.newChart()
+         .setChartType(Charts.ChartType.LINE)
+         .addRange(ddDataRange)
+         .setNumHeaders(1)
+         .setPosition(28, ddStartCol + 4, 0, 0)
+         .setOption('title', '歷史回撤比較 (策略 vs ' + Constants.BENCHMARK + ')')
+         .setOption('hAxis.title', '日期')
+         .setOption('vAxis.title', '回撤 (%)')
+         .setOption('width', 1000)
+         .setOption('height', 500)
+         .setOption('legend', { position: 'top', textStyle: { fontSize: 11 } })
+         .setOption('colors', ['#1E3A8A', '#F59E0B']);
       
       // Remove old charts
       var oldCharts = chartSheet.getCharts();
       oldCharts.forEach(function(c) { chartSheet.removeChart(c); });
       
       chartSheet.insertChart(chartBuilder.build());
+      chartSheet.insertChart(ddChartBuilder.build());
       
       chartSheet.activate();
   },

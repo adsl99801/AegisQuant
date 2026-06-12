@@ -22,19 +22,20 @@ var FilterEngine = {
   },
 
   /**
-   * 判斷是否滿足解除危機條件
-   * 規則：單日 VIX < 20 且 SPY 未破前日低點 (需由 Controller 追蹤連續 3 日)
+   * 判斷是否滿足解除危機條件 (方案 A)
+   * 規則：單日 VIX < 20 且 SPY 收盤價 > SPY 5日 EMA
    */
-  checkCrisisExit: function(vix, portfolioMdd, day, prevLowPrices) {
+  checkCrisisExit: function(vix, day, buffer) {
     var vixSafe = vix < Constants.CRISIS_CONFIG.EXIT_VIX;
     
-    // 檢查 SPY 是否存在且未破前日低點 (Higher Low or Equal Low)
     var spySafe = false;
     var spy = Constants.BENCHMARK; // 'SPY'
     
-    // 如果資料不足 (第一天或無 SPY)，不視為 Safe，避免誤判
-    if (day[spy] && prevLowPrices && prevLowPrices[spy]) {
-      if (day[spy].low >= prevLowPrices[spy]) {
+    if (day[spy] && buffer && buffer.length > 0) {
+      // 擷取最後 20 天的數據來計算 5日 EMA 以確保精度
+      var lookbackSlice = buffer.slice(-20);
+      var spyEma = Utils.calculateEMA(lookbackSlice, spy, Constants.CRISIS_CONFIG.EXIT_EMA_PERIOD || 5);
+      if (spyEma > 0 && day[spy].close > spyEma) {
         spySafe = true;
       }
     }
@@ -44,7 +45,7 @@ var FilterEngine = {
 
   /**
    * 檢查趨勢過濾 (Layer 3)
-   * 規則：價格 < 100MA 且 近1月報酬 < 0 => 禁止持有 (除非鎖倉)
+   * 規則：價格 < 100MA * 97% 且 近1月報酬 < -2% => 禁止持有 (除非鎖倉)
    * @param {Object} prices 當日價格資料
    * @param {Object} ma100  當日 100MA
    * @param {Object} monthlyReturns 近1月報酬
@@ -57,13 +58,15 @@ var FilterEngine = {
         var price = prices[t].close;
         var belowMa = false;
         
+        var buffer = Constants.CONSTRAINTS.TREND_MA_BUFFER || 0.97;
         if (price > 0 && ma100[t] > 0) {
-           belowMa = price < ma100[t];
+           belowMa = price < (ma100[t] * buffer);
         } 
         
-        var negMom  = monthlyReturns[t] < 0;
+        var minMom = Constants.CONSTRAINTS.TREND_MOM_MIN || -0.02;
+        var negMom  = monthlyReturns[t] < minMom;
         
-        // 若「低於均線」且「動能為負」，則禁止持有 (return false)
+        // 若「低於均線緩衝值」且「月報酬低於動能閾值」，則禁止持有 (return false)
         if (belowMa && negMom) {
           allowed[t] = false;
         } else {

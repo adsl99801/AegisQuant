@@ -430,10 +430,18 @@ var RebalanceController = {
 
           // 357: Calculate Current Value
           var currentValue = ctx.portfolio.updateValue(day);
-          if (currentValue > ctx.portfolioMax) ctx.portfolioMax = currentValue;
+          day.portfolioValue = currentValue; // Set today's value first so it is included in rolling max
           
-          var currentMdd = (ctx.portfolioMax > 0) ? (ctx.portfolioMax - currentValue) / ctx.portfolioMax : 0;
-          day.portfolioValue = currentValue;
+          // Calculate Rolling 5-day MDD (Option A)
+          var rollingMax = currentValue;
+          var lookback = Math.min(ctx.buffer.length, 5);
+          for (var k = 0; k < lookback; k++) {
+             var prevDayVal = ctx.buffer[ctx.buffer.length - 1 - k].portfolioValue;
+             if (prevDayVal !== undefined && prevDayVal > rollingMax) {
+                rollingMax = prevDayVal;
+             }
+          }
+          var currentMdd = (rollingMax > 0) ? (rollingMax - currentValue) / rollingMax : 0;
 
           // Check Year Change based on Date
           // If we detect a new year, the SOY value should be the value *before* today's change?
@@ -512,27 +520,25 @@ var RebalanceController = {
     
     if (ctx.crisisMode) {
       // Check Exit Condition
-      if (FilterEngine.checkCrisisExit(vix, currentMdd, day, ctx.prevLowPrices)) {
+      if (FilterEngine.checkCrisisExit(vix, day, ctx.buffer)) {
         ctx.crisisExitCount++;
         if (ctx.crisisExitCount >= Constants.CRISIS_CONFIG.WAIT_DAYS) {
           ctx.crisisMode = false;
           ctx.crisisExitCount = 0;
           result.signals.push('🟢解除危機');
-          result.descriptions.push(`解除原因: VIX(${vix.toFixed(1)})<${Constants.CRISIS_CONFIG.EXIT_VIX}且SPY連續${Constants.CRISIS_CONFIG.WAIT_DAYS}日未破底`);
+          var emaPeriod = Constants.CRISIS_CONFIG.EXIT_EMA_PERIOD || 5;
+          result.descriptions.push(`解除原因: VIX(${vix.toFixed(1)})<${Constants.CRISIS_CONFIG.EXIT_VIX}且SPY連續${Constants.CRISIS_CONFIG.WAIT_DAYS}日收高於${emaPeriod}EMA`);
         } else {
           result.descriptions.push(`觀察解除 (${ctx.crisisExitCount}/${Constants.CRISIS_CONFIG.WAIT_DAYS}): VIX(${vix.toFixed(1)})<${Constants.CRISIS_CONFIG.EXIT_VIX}`);
         }
       } else {
         // Reset counter if condition fails
         ctx.crisisExitCount = 0;
-        // Optionally log why reset? e.g. "VIX too high" or "SPY made new low"?
-        // Detailed log might be too noisy for daily, but good for debugging.
-        // Let's keep it simple: if VIX is high or SPY low, we stay in crisis.
+        var emaPeriod = Constants.CRISIS_CONFIG.EXIT_EMA_PERIOD || 5;
         if (vix >= Constants.CRISIS_CONFIG.EXIT_VIX) {
              result.descriptions.push(`維持危機: VIX(${vix.toFixed(1)})>=${Constants.CRISIS_CONFIG.EXIT_VIX}`); 
         } else {
-             // Implied SPY Low broken
-             result.descriptions.push(`維持危機: SPY破前低`);
+             result.descriptions.push(`維持危機: SPY未收高於${emaPeriod}EMA`);
         }
       }
     } else {

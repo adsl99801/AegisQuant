@@ -124,7 +124,7 @@ graph TD
 
 ### 3. 生成績效圖表
 * 點選 **`量化回測系統` ➔ `5. 繪製績效走勢圖`**。
-* 系統會自動反推大盤淨值並新增一個 `Performance Chart` 工作表，繪製出一張 **策略績效 vs SPY 大盤績效** 的對比折線圖，讓您一目了然策略是否跑贏大盤。
+* 系統會自動反推大盤淨值並新增一個 `Performance Chart` 工作表，繪製出 **策略績效 vs SPY 大盤績效** 的 **年度報酬率比較柱狀圖** 與 **歷史回撤比較折線圖**，讓您一目了然策略的獲利能力與風險特性。
 
 ### 4. 實機再平衡計算器 (Rebalance Calculator)
 * 點選 **`量化回測系統` ➔ `7. rebalanceCal`**。
@@ -140,7 +140,7 @@ graph TD
 * **初始資金與標的**：
   ```javascript
   INITIAL_CAPITAL: 10000,
-  TICKERS: ['SPMO', 'XLE', 'VDC', 'VCR'], // 投資組合標的
+  TICKERS: ['SPMO', 'VCR', 'VDC'], // 投資組合標的
   BENCHMARK: 'SPY', // 比較基準大盤
   START_DATE: '2010-06-29', // 回測開始日期
   ```
@@ -149,7 +149,7 @@ graph TD
   CRISIS_CONFIG: {
     VIX_THRESHOLD: 25,  // 當 VIX 波動率大於此值時觸發避險
     MDD_THRESHOLD: 0.07, // 或是 5 日內最大回撤大於 7% 觸發避險
-    WEIGHTS: { SPMO: 0, XLE: 0, VDC: 0, VCR: 0 } // 避險時 100% 持有現金
+    WEIGHTS: { SPMO: 0, VCR: 0, VDC: 0 } // 避險時 100% 持有現金
   }
   ```
 * **不虧損鎖倉原則 (No-Loss Selling Lock)**：

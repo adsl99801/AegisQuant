@@ -20,6 +20,28 @@ var Utils = {
   },
 
   /**
+   * 計算指數移動平均 (EMA)
+   */
+  calculateEMA: function(slice, ticker, period) {
+    if (!slice || slice.length === 0) return 0;
+    var alpha = 2 / (period + 1);
+    var ema = 0;
+    var first = true;
+    for (var i = 0; i < slice.length; i++) {
+      if (slice[i][ticker] && slice[i][ticker].close > 0) {
+        var price = slice[i][ticker].close;
+        if (first) {
+          ema = price;
+          first = false;
+        } else {
+          ema = price * alpha + ema * (1 - alpha);
+        }
+      }
+    }
+    return ema;
+  },
+
+  /**
    * 計算區間報酬率
    */
   calculateReturns: function(slice, ticker) {
