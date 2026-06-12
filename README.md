@@ -1,6 +1,33 @@
-# 📈 Google Apps Script 量化回測系統 (GAS Quant Backtest)
+# 🛡️ AegisQuant：基於 Google Apps Script 的自動化防禦型量化回測與資產再平衡系統
 
-本專案是一個基於 **Google Apps Script (GAS)** 與 **Google Sheets** 的自動化量化交易回測與資產再平衡系統。系統整合了 **Yahoo Finance API** 自動抓取歷史數據，並具備防禦機制（VIX / MDD）、不虧損鎖倉保護、趨勢/跳空濾網以及動態強弱勢評分系統。
+AegisQuant 是一個專為中長期資產配置設計的**雲端自動化量化交易回測與資產再平衡系統**。本專案以 **Google Sheets** 為前端與輕量資料庫，利用 **Google Apps Script (GAS)** 打造免伺服器 (Serverless) 的量化回測與自動化管理工作流，實現從數據獲取、策略運算、風險防禦到自動通知的完整閉環。
+
+為應對極端市場波動，本系統特別引入了**主動式雙重危機防禦機制**（基於 VIX 與 MDD 指標）以及獨創的**不虧損鎖倉保護機制**，提供兼具「動能收益」與「強大下行防禦」的穩健配置方案。
+
+---
+
+## 🌟 核心特色與技術亮點 (Key Features & Highlights)
+
+本專案之設計旨在展示量化回測邏輯、雲端整合架構與自動化管理流程，具備以下核心亮點：
+
+1. **📊 Google Sheets 雲端無縫整合 (Cloud-Native Sheet Integration)**
+   - 以 Google Sheets 作為輕量級資料庫與視覺化報表中心。透過試算表直觀呈現回測淨值走勢、歷史交易日誌，並提供互動式試算表介面，免去傳統回測框架繁雜的 GUI 與資料庫佈署成本。
+2. **🛡️ 主動式雙重危機防禦機制 (Multi-Tier Crisis Defense)**
+   - 內建市場壓力偵測系統。當市場恐慌指數 VIX 飆升或投資組合最大回撤（MDD）大於設定的閾值時，系統將主動觸發避險程序，將權重 100% 轉移至現金，並設有嚴格的冷卻解除機制，避免市場震盪造成反覆侵蝕。
+3. **🔒 創新不虧損鎖倉保護 (No-Loss Selling Lock)**
+   - 專為應對回檔期設計的獨創防禦邏輯。當進行資產再平衡時，若某檔持股的當前市價低於其歷史加權平均持股成本，系統將強制鎖定該標的之目標權重，暫停賣出以避免在低點實現帳面虧損，用時間換取反彈空間。
+4. **🧠 動態多因子權重評分引擎 (Dynamic Factor Scoring Engine)**
+   - 策略核心採用多因子評分模型。針對各投資標的計算近 1 月與近 3 月報酬動能、年化夏普比率（Sharpe Ratio）、相較於大盤（SPY）的超額收益 Alpha 及系統性風險 Beta。每月自動計算綜合得分，動態調整權重以強化「強者恆強」的動能效應。
+5. **⏰ 全自動化排程與決策流 (Autonomous Serverless Scheduling)**
+   - 透過 Google Apps Script 的時間驅動觸發器（Time-driven Triggers）實現無伺服器託管排程。系統每日定時執行，自動判斷「是否觸發再平衡條件」、「是否因偏差過小而忽略」或「維持原配置」，使每筆交易決策有跡可循。
+6. **📥 每日自動數據抓取與清洗 (Automated Daily ETL Pipeline)**
+   - 自動對接 Yahoo Finance API，於每日美股收盤後定時抓取最新的日層級 OHLCV 歷史數據。內建**智慧缺失數據回填（Missing Data Backfill）**演算法，自動補齊尚未上市標的的歷史缺口並對齊時間戳，確保回測數據矩陣的完整性。
+7. **📧 自動化 HTML 績效與警報報告 (Automated Professional Reporting)**
+   - 每次再平衡或回測完成時，系統會自動編譯 HTML 格式績效報告（包含近期持倉明細、關鍵交易日誌與 YTD 績效比對），透過 GAS 的 MailApp 模組自動發送至使用者電子信箱。
+8. **🧮 實機再平衡計算器 (Interactive Rebalance Calculator)**
+   - 提供實用的輔助交易工具。只需填入當前總投資資金與目標配置，系統將自動連網抓取最新報價，並即時給出具體的「買入/賣出股數」操作建議，無縫對接回測策略與實際下單交易。
+
+---
 
 對於第一次接觸本專案的人，這份指南將引導您在 **5 分鐘內**完成部署並開始運行回測。
 
@@ -108,7 +135,7 @@ graph TD
 
 ## ⚙️ 策略參數調整 (`Constants.gs`)
 
-您可以開啟 [Constants.gs](file:///d:/Users/keith/project/quant_backtest_gas/Constants.gs) 自行客製化策略參數。修改後存檔，重新執行回測即可套用：
+您可以開啟 [Constants.gs](Constants.gs) 自行客製化策略參數。修改後存檔，重新執行回測即可套用：
 
 * **初始資金與標的**：
   ```javascript
@@ -122,7 +149,7 @@ graph TD
   CRISIS_CONFIG: {
     VIX_THRESHOLD: 25,  // 當 VIX 波動率大於此值時觸發避險
     MDD_THRESHOLD: 0.07, // 或是 5 日內最大回撤大於 7% 觸發避險
-    WEIGHTS: { SPMO: 0, XLE: 0, VDC: 0, VCR: 0 } // 避險時 100% 持有現金 / SGOV
+    WEIGHTS: { SPMO: 0, XLE: 0, VDC: 0, VCR: 0 } // 避險時 100% 持有現金
   }
   ```
 * **不虧損鎖倉原則 (No-Loss Selling Lock)**：
@@ -156,15 +183,15 @@ graph TD
 
 ## 📂 檔案架構說明
 
-* [Code.gs](file:///d:/Users/keith/project/quant_backtest_gas/Code.gs)：自定義選單入口與按鈕事件處理。
-* [Constants.gs](file:///d:/Users/keith/project/quant_backtest_gas/Constants.gs)：全域設定檔（權重、閾值、Email等）。
-* [MarketDataFetcher.gs](file:///d:/Users/keith/project/quant_backtest_gas/MarketDataFetcher.gs)：對接 Yahoo Finance 下載 CSV 並對資料進行回填清洗。
-* [RebalanceController.gs](file:///d:/Users/keith/project/quant_backtest_gas/RebalanceController.gs)：多層級量化策略核心控制器（控制危機、鎖倉與再平衡）。
-* [FilterEngine.gs](file:///d:/Users/keith/project/quant_backtest_gas/FilterEngine.gs)：危機、趨勢、跳空狀態過濾器。
-* [ScoringEngine.gs](file:///d:/Users/keith/project/quant_backtest_gas/ScoringEngine.gs)：計算個股 1M/3M/Sharpe/Alpha 動態綜合評分。
-* [PortfolioManager.gs](file:///d:/Users/keith/project/quant_backtest_gas/PortfolioManager.gs)：虛擬交易帳戶，管理現金、股數與持股成本。
-* [RebalanceExecutor.gs](file:///d:/Users/keith/project/quant_backtest_gas/RebalanceExecutor.gs)：執行具體買賣撮合，並精確扣除手續費與稅金滑點。
-* [RebalanceCalculator.gs](file:///d:/Users/keith/project/quant_backtest_gas/RebalanceCalculator.gs)：提供日常手動資產配置的即時計算工具。
-* [Analysis.gs](file:///d:/Users/keith/project/quant_backtest_gas/Analysis.gs)：報表生成與 Google Sheet 折線圖繪製。
-* [DailyLogger.gs](file:///d:/Users/keith/project/quant_backtest_gas/DailyLogger.gs)：批次寫入優化，解決 GAS 執行時間限制的持久化記錄器。
-* [Utils.gs](file:///d:/Users/keith/project/quant_backtest_gas/Utils.gs)：均線、夏普值、相關係數與 Beta 等純數學計算函式。
+* [Code.gs](Code.gs)：自定義選單入口與按鈕事件處理。
+* [Constants.gs](Constants.gs)：全域設定檔（權重、閾值、Email等）。
+* [MarketDataFetcher.gs](MarketDataFetcher.gs)：對接 Yahoo Finance 下載 CSV 並對資料進行回填清洗。
+* [RebalanceController.gs](RebalanceController.gs)：多層級量化策略核心控制器（控制危機、鎖倉與再平衡）。
+* [FilterEngine.gs](FilterEngine.gs)：危機、趨勢、跳空狀態過濾器。
+* [ScoringEngine.gs](ScoringEngine.gs)：計算個股 1M/3M/Sharpe/Alpha 動態綜合評分。
+* [PortfolioManager.gs](PortfolioManager.gs)：虛擬交易帳戶，管理現金、股數與持股成本。
+* [RebalanceExecutor.gs](RebalanceExecutor.gs)：執行具體買賣撮合，並精確扣除手續費與稅金滑點。
+* [RebalanceCalculator.gs](RebalanceCalculator.gs)：提供日常手動資產配置的即時計算工具。
+* [Analysis.gs](Analysis.gs)：報表生成與 Google Sheet 折線圖繪製。
+* [DailyLogger.gs](DailyLogger.gs)：批次寫入優化，解決 GAS 執行時間限制的持久化記錄器。
+* [Utils.gs](Utils.gs)：均線、夏普值、相關係數與 Beta 等純數學計算函式。

@@ -5,7 +5,7 @@
 
 function onOpen() {
   var ui = SpreadsheetApp.getUi();
-  ui.createMenu('量化回測系統')
+  ui.createMenu('🛡️ AegisQuant 量化系統')
     .addItem('1. 初始化與抓取資料', 'setupAndFetchData')
     .addItem('2. 執行回測', 'runBacktest')
     .addItem('3. 查看最近三次再平衡', 'showAnalysis')
@@ -17,7 +17,7 @@ function onOpen() {
 }
 function testSendEmail() {
   const recipient = Constants.NOTIFICATION_EMAIL;
-  const subject = '量化回測通知 - 完成 (無訊號)';
+  const subject = '🛡️ AegisQuant 系統通知 - 回測完成 (無交易訊號)';
   const msg = '回測已完成，但未產生任何訊號。';
   
   // 發送郵件
