@@ -1,0 +1,11 @@
+# Ignore all files by default
+**/*
+
+# Allow only Google Apps Script compatible files
+!**/*.gs
+!**/*.js
+!**/*.html
+!appsscript.json
+
+# Ignore node_modules
+**/node_modules/**
