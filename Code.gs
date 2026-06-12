@@ -16,7 +16,7 @@ function onOpen() {
     .addToUi();
 }
 function testSendEmail() {
-  const recipient = 'adsl99801@gmail.com';
+  const recipient = Constants.NOTIFICATION_EMAIL;
   const subject = '量化回測通知 - 完成 (無訊號)';
   const msg = '回測已完成，但未產生任何訊號。';
   

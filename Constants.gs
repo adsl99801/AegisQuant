@@ -54,6 +54,6 @@ var Constants = {
   },
   
   // Notification
-  NOTIFICATION_EMAIL: 'adsl99801@gmail.com',
+  NOTIFICATION_EMAIL: '...@gmail.com',
   NOTIFY_ONLY_ON_OPERATION: true
 };

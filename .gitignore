@@ -1,0 +1,25 @@
+# OS metadata files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Node modules & logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Google Apps Script / clasp
+.clasprc.json
+.clasp.json
+
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

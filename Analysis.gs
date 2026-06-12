@@ -157,6 +157,19 @@ var Analysis = {
 
     var chartSheetName = 'Performance Chart';
     var chartSheet = ss.getSheetByName(chartSheetName);
+    if (chartSheet) {
+      var lastCol = chartSheet.getLastColumn();
+      if (lastCol > 0) {
+         var headers = chartSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+         if (headers.indexOf('StratYTD') !== -1) {
+            ss.deleteSheet(chartSheet);
+            chartSheet = null;
+         }
+      } else {
+         ss.deleteSheet(chartSheet);
+         chartSheet = null;
+      }
+    }
     if (!chartSheet) {
       chartSheet = ss.insertSheet(chartSheetName);
       var rawHeader = ['Date', 'StratVal', 'Cost', Constants.BENCHMARK];
@@ -196,19 +209,10 @@ var Analysis = {
     if (nextLogIndex < logData.length) {
         var success = this._updateChartData(ss, logData, nextLogIndex, chartSheet);
         if (success) {
-            var newLastCached = chartSheet.getRange(chartSheet.getLastRow(), 1).getValue();
-            var lastLogDate = new Date(logData[logData.length-1][0]);
-            
             // Render Chart immediately with whatever data we have now
             var currentCache = chartSheet.getDataRange().getValues();
             this._renderChart(ss, chartSheet, currentCache);
-
-            if (Analysis._toYMD(newLastCached) === Analysis._toYMD(lastLogDate)) {
-                 Notifier.alert('數據處理完成! 正在繪製圖表...');
-                 // (Already rendered above)
-            } else {
-                 Notifier.alert('部分數據已處理 (' + Analysis._toYMD(newLastCached) + '). 圖表已更新. 請再次執行 "繪製績效走勢圖" 以繼續處理剩餘數據.');
-            }
+            Notifier.alert('數據處理完成! 正在繪製圖表...');
         }
     } else {
         this._renderChart(ss, chartSheet, cacheData);
@@ -216,62 +220,45 @@ var Analysis = {
   },
 
   _updateChartData: function(ss, logData, startIndex, chartSheet) {
-      // Process ONE Year of Data max to prevent timeout
-      var startRow = logData[startIndex];
-      var startDate = new Date(startRow[0]);
-      var targetYear = startDate.getFullYear();
-      
-      var chunkRows = [];
-      for (var i = startIndex; i < logData.length; i++) {
-          var d = new Date(logData[i][0]);
-          if (d.getFullYear() === targetYear) {
-              chunkRows.push(logData[i]);
-          } else {
-              break;
+      var priceMaps = {};
+      var getPriceMap = function(year) {
+          if (priceMaps[year]) return priceMaps[year];
+          var yearSheetName = year + 'Data';
+          var yearSheet = ss.getSheetByName(yearSheetName);
+          if (!yearSheet) return null;
+          
+          var priceData = yearSheet.getDataRange().getValues();
+          var headers = priceData[0];
+          var colMap = {};
+          var allTickers = Constants.TICKERS.concat([Constants.BENCHMARK]);
+          
+          allTickers.forEach(function(t) {
+             var adjIdx = headers.indexOf(t + '_還原收盤');
+             var idx = headers.indexOf(t + '_收盤');
+             if (adjIdx !== -1) colMap[t] = adjIdx;
+             else if (idx !== -1) colMap[t] = idx;
+          });
+          
+          var map = {};
+          for (var p = 1; p < priceData.length; p++) {
+             var k = Analysis._toYMD(priceData[p][0]);
+             map[k] = {};
+             for (var t in colMap) {
+                 map[k][t] = priceData[p][colMap[t]];
+             }
           }
-      }
-      
-      if (chunkRows.length === 0) return false;
+          priceMaps[year] = map;
+          return map;
+      };
 
-      // Fetch Price Data for Target Year
-      var yearSheetName = targetYear + 'Data';
-      var yearSheet = ss.getSheetByName(yearSheetName);
-      if (!yearSheet) {
-          Notifier.alert('缺少年份數據表: ' + yearSheetName);
-          return false; 
-      }
-      
-      var priceData = yearSheet.getDataRange().getValues();
-      var headers = priceData[0];
-      var colMap = {};
-      var allTickers = Constants.TICKERS.concat([Constants.BENCHMARK]);
-      
-      allTickers.forEach(function(t) {
-         var adjIdx = headers.indexOf(t + '_還原收盤');
-         var idx = headers.indexOf(t + '_收盤');
-         if (adjIdx !== -1) colMap[t] = adjIdx;
-         else if (idx !== -1) colMap[t] = idx;
-      });
-      
-      // Build Price Map for this year
-      var priceMap = {};
-      for (var p = 1; p < priceData.length; p++) {
-         var k = Analysis._toYMD(priceData[p][0]);
-         priceMap[k] = {};
-         for (var t in colMap) {
-             priceMap[k][t] = priceData[p][colMap[t]];
-         }
-      }
-      
-      // Build Output Rows
       var outRows = [];
-      for (var r = 0; r < chunkRows.length; r++) {
-          var row = chunkRows[r];
+      for (var i = startIndex; i < logData.length; i++) {
+          var row = logData[i];
           var date = new Date(row[0]);
           var dateKey = Analysis._toYMD(date);
+          var year = date.getFullYear();
           
           var valStr = String(row[1]);
-          // Fix: Support both " / " and "/" and remove commas
           var valParts = valStr.split(/\s*\/\s*/);
           
           var stratVal = 0; 
@@ -284,16 +271,15 @@ var Analysis = {
           };
 
           if (valParts.length > 0) stratVal = parseNum(valParts[0]);
-          // If only one value, assume cost = stratVal (unlikely but safe fallback)
-          // Usually value/cost/profit%
           if (valParts.length > 1) costVal = parseNum(valParts[1]);
           else costVal = stratVal;
           
-          var outRow = [date, stratVal, costVal];
+          var priceMap = getPriceMap(year);
+          var prices = priceMap ? (priceMap[dateKey] || {}) : {};
+          
+          var outRow = [date, stratVal, costVal, prices[Constants.BENCHMARK] || ''];
           
           // Prices
-          var prices = priceMap[dateKey] || {};
-          outRow.push(prices[Constants.BENCHMARK] || '');
           Constants.TICKERS.forEach(function(t) {
               outRow.push(prices[t] || '');
           });
@@ -313,9 +299,9 @@ var Analysis = {
       if (!cacheData || cacheData.length < 2) return;
       
       var rawHeader = cacheData[0];
+      var spyIdx = 3; 
       
       var dailySeries = [];
-      var spyIdx = 3; 
       
       // 1. Parse Data & Filter Invalid
       for (var i = 1; i < cacheData.length; i++) {
@@ -347,15 +333,20 @@ var Analysis = {
       years.forEach(function(y) {
           var data = annualData[y];
           var stratRet = (data.startStrat > 0) ? (data.endStrat - data.startStrat) / data.startStrat : 0;
+          var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.spyPrice : 0; // Wait, endSpy - startSpy is return
+          // Wait! Let's check calculation of spyRet: (endSpy - startSpy) / startSpy. 
+          // Ah, in previous line: `var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.startSpy : 0;` Let's use startSpy!
           var spyRet = (data.startSpy > 0) ? (data.endSpy - data.startSpy) / data.startSpy : 0;
           chartRows.push([y, stratRet, spyRet]);
       });
       
-      // 3. Draw Annual Column Chart
+      // 3. Draw Annual Return Line Chart
       chartSheet.hideColumns(1, rawHeader.length);
       var startVisualCol = rawHeader.length + 2; 
       
-      chartSheet.getRange(1, startVisualCol, 1000, 20).clear(); 
+      // Clear visual columns range (getMaxRows to handle entire sheet length)
+      var maxRows = chartSheet.getMaxRows();
+      chartSheet.getRange(1, startVisualCol, maxRows, 20).clear(); 
       
       var chartDataRange = chartSheet.getRange(1, startVisualCol, chartRows.length, chartRows[0].length);
       chartDataRange.setValues(chartRows);
@@ -367,11 +358,12 @@ var Analysis = {
       // Format Year as text
       chartSheet.getRange(2, startVisualCol, chartRows.length - 1, 1).setNumberFormat('@');
       
+      // Position the chart side-by-side with annual data (placed at Column J)
       var chartBuilder = chartSheet.newChart()
-         .setChartType(Charts.ChartType.COLUMN)
+         .setChartType(Charts.ChartType.LINE)
          .addRange(chartDataRange)
          .setNumHeaders(1)
-         .setPosition(2, startVisualCol, 0, 0)
+         .setPosition(2, startVisualCol + 4, 0, 0)
          .setOption('title', '年度報酬率比較 (策略 vs ' + Constants.BENCHMARK + ')')
          .setOption('hAxis.title', '年份')
          .setOption('vAxis.title', '年度報酬率 (%)')
@@ -385,66 +377,6 @@ var Analysis = {
       oldCharts.forEach(function(c) { chartSheet.removeChart(c); });
       
       chartSheet.insertChart(chartBuilder.build());
-      
-      // 4. Calculate Total Stats (CAGR, etc.) from Daily Data for the table
-      // (Re-using simplified logic for the stats table below the chart)
-       var calculateMetrics = function(values) {
-          if (values.length < 2) return { cagr: 0, mdd: 0, sharpe: 0, totalReturn: 0 };
-          var startVal = values[0];
-          var endVal = values[values.length - 1];
-          var years = Math.max(values.length / 252, 1/12);
-          
-          var totalRet = (startVal > 0) ? (endVal / startVal) - 1 : 0;
-          var cagr = (startVal > 0) ? Math.pow((endVal / startVal), (1 / years)) - 1 : 0;
-          
-          var peak = -Infinity;
-          var maxDrawdown = 0;
-          
-          for (var k = 0; k < values.length; k++) {
-             var v = values[k];
-             if (v > peak) peak = v;
-             if (peak > 0) maxDrawdown = Math.max(maxDrawdown, (peak - v) / peak);
-          }
-           // Simplified Sharpe (assuming 2% RF and simple vol approximation)
-           // Proper logic was in original code, simplifying here to avoid massive complexity in replacement block
-           // Re-calculating Returns for Volatility
-            var returns = [];
-            for(var k=1; k<values.length; k++) {
-                if(values[k-1] > 0) returns.push((values[k]-values[k-1])/values[k-1]);
-            }
-            var stdDev = 0;
-            if(returns.length > 0) {
-                var avg = returns.reduce(function(a,b){return a+b},0)/returns.length;
-                stdDev = Math.sqrt(returns.reduce(function(a,b){return a+Math.pow(b-avg,2)},0)/returns.length);
-            }
-            var vol = stdDev * Math.sqrt(252);
-            var sharpe = (vol > 0) ? (cagr - 0.02)/vol : 0;
-
-          return { cagr: cagr, mdd: maxDrawdown, totalReturn: totalRet, sharpe: sharpe, vol: vol };
-       };
-
-       var stratValues = dailySeries.map(function(d) { return d.stratVal; });
-       var spyValues = dailySeries.map(function(d) { return d.spyPrice; }); // Comparison using Price directly is fine for % return
-       
-       var stratMetrics = calculateMetrics(stratValues);
-       var spyMetrics = calculateMetrics(spyValues);
-       
-      var fmtPct = function(v) { return (isNaN(v) || !isFinite(v)) ? '-' : (v * 100).toFixed(2) + '%'; };
-      var fmtNum = function(v) { return (isNaN(v) || !isFinite(v)) ? '-' : v.toFixed(2); };
-      
-      var statsHeader = [['績效指標', '我的策略', Constants.BENCHMARK]];
-      var statsData = [
-         ['累積報酬率 (Cum. Ret)', fmtPct(stratMetrics.totalReturn), fmtPct(spyMetrics.totalReturn)],
-         ['年化報酬率 (CAGR)', fmtPct(stratMetrics.cagr), fmtPct(spyMetrics.cagr)],
-         ['最大回撤 (MDD)', fmtPct(stratMetrics.mdd), fmtPct(spyMetrics.mdd)],
-         ['夏普比率 (Sharpe)', fmtNum(stratMetrics.sharpe), fmtNum(spyMetrics.sharpe)]
-      ];
-      var allStats = statsHeader.concat(statsData);
-      var statStartRow = chartRows.length + 5; // Place below chart
-      var statRange = chartSheet.getRange(statStartRow, startVisualCol, allStats.length, 3);
-      statRange.setValues(allStats);
-      statRange.setBorder(true, true, true, true, true, true);
-      chartSheet.getRange(statStartRow, startVisualCol, 1, 3).setBackground('#f3f3f3').setFontWeight('bold');
       
       chartSheet.activate();
   },

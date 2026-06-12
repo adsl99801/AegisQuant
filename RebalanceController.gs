@@ -85,7 +85,7 @@ var RebalanceController = {
      lastData = DailyLogger.getLastRowData();
      if (!lastData) return false;
      
-     var lastDate = lastData.date;
+     var lastDate = new Date(lastData.date);
      var portStateStr = lastData.portfolioDetails;
      
      // Set Start Date to Next Day
@@ -102,79 +102,104 @@ var RebalanceController = {
      
      // Set Loop State
      ctx.currentYear = startDate.getFullYear();
-     // Benchmark Units? Need previous day's SPY close to maintain sync?
-     // Actually benchmark is "Hold SPY".
-     // Units = Initial / StartSPY.
-     // To resume, we keep same units. Where to store?
-     // We can just re-calculate units if we knew "Start of Time" SPY.
-     // Or just assume Benchmark Value = SPY Price * Units.
-     // We need to know Units.
-     // Trick: Bench Value is logged? "Portfolio Value" is logged. "YTD Bench" is logged.
-     // We can re-derive units from current SPY price if we have benchmark value.
-     // Taking a shortcut: Calculate Units based on SPY price at Start of Time (2010).
-     // Since Strategy doesn't trade Benchmark, Units is constant!
-     // We just need SPY price at 2010-06-29.
-     // For now, let's fast check first year data to set units.
      this._initBenchmarkUnits(ctx);
      
-     // FIX: Restore SOY Portfolio Value from YTD if available
-     // DailyLog: "Bench% / Strategy%"
-     // valueCost: "Value / Cost / Change%"
-     if (lastData.ytdComparison && lastData.valueCost) {
-         try {
-             var ytdParts = String(lastData.ytdComparison).split('/');
-             if (ytdParts.length > 1) {
-                 // Strategy YTD is the second part: "11.45%"
-                 var stratYtdStr = ytdParts[1].replace('%', '').trim();
-                 var stratYtd = parseFloat(stratYtdStr) / 100; // 0.1145
-                 
-                 // Current Value from valueCost: "59617 / 50000 / ..."
-                 var valParts = String(lastData.valueCost).split('/');
-                 var currentValStr = valParts[0].replace(/,/g, '').trim();
-                 var currentVal = parseFloat(currentValStr);
-                 
-                 if (!isNaN(stratYtd) && !isNaN(currentVal) && (1 + stratYtd) !== 0) {
-                     // Reverse Calculate SOY: Current = SOY * (1 + YTD)
-                     // SOY = Current / (1 + YTD)
-                     ctx.soyPortfolioValue = currentVal / (1 + stratYtd);
-                     Logger.log(`Resumed SOY Portfolio Value: ${ctx.soyPortfolioValue.toFixed(2)} (Derived from Val:${currentVal} YTD:${stratYtd*100}%)`);
-                 }
-             }
-         } catch (e) {
-             Logger.log('Error restoring SOY Value: ' + e.message);
-         }
+     // Get Current Portfolio Value from last row
+     var currentVal = 0;
+     if (lastData.valueCost) {
+         var valParts = String(lastData.valueCost).split('/');
+         var currentValStr = valParts[0].replace(/,/g, '').trim();
+         currentVal = parseFloat(currentValStr);
      }
      
-     this._updateSoyValuesForResume(ctx, ctx.currentYear);
+     var lastYear = lastDate.getFullYear();
+     var currentYear = startDate.getFullYear();
+     
+     if (currentYear !== lastYear) {
+         // Year boundary crossed!
+         // SOY portfolio value for currentYear is the closing value of lastYear
+         if (currentVal > 0) {
+             ctx.soyPortfolioValue = currentVal;
+         }
+         // SOY benchmark value for currentYear is the closing value of lastYear
+         var spyPrice = 0;
+         var sPrev = ctx.ss.getSheetByName(lastYear + 'Data');
+         if (sPrev && sPrev.getLastRow() > 1) {
+             var vals = sPrev.getRange(sPrev.getLastRow(), 1, 1, sPrev.getLastColumn()).getValues()[0];
+             var headers = sPrev.getRange(1, 1, 1, sPrev.getLastColumn()).getValues()[0];
+             var spyIdx = headers.indexOf(Constants.BENCHMARK + '_收盤');
+             if (spyIdx > -1) {
+                 spyPrice = vals[spyIdx];
+             }
+         }
+         if (spyPrice > 0 && ctx.benchmarkUnits > 0) {
+             ctx.soyBenchmarkValue = ctx.benchmarkUnits * spyPrice;
+         }
+         Logger.log(`Year boundary crossed during resume (${lastYear} -> ${currentYear}): SOY Port=${ctx.soyPortfolioValue.toFixed(2)} Bench=${ctx.soyBenchmarkValue.toFixed(2)}`);
+     } else {
+         // Same year!
+         // Restore SOY Portfolio Value from YTD reverse calculation
+         if (lastData.ytdComparison && currentVal > 0) {
+             try {
+                 var ytdParts = String(lastData.ytdComparison).split('/');
+                 if (ytdParts.length > 1) {
+                     var stratYtdStr = ytdParts[1].replace('%', '').trim();
+                     var stratYtd = parseFloat(stratYtdStr) / 100;
+                     if (!isNaN(stratYtd) && (1 + stratYtd) !== 0) {
+                         ctx.soyPortfolioValue = currentVal / (1 + stratYtd);
+                         Logger.log(`Resumed SOY Portfolio Value: ${ctx.soyPortfolioValue.toFixed(2)} (Derived YTD: ${stratYtd*100}%)`);
+                     }
+                 }
+             } catch (e) {
+                 Logger.log('Error restoring SOY Portfolio Value: ' + e.message);
+             }
+         }
+         
+         // Restore SOY Benchmark Value
+         this._updateSoyValuesForResume(ctx, currentYear);
+     }
 
      return true;
   },
 
   _updateSoyValuesForResume: function(ctx, resumeYear) {
-      // Logic: Read the first row of {resumeYear}Data to get SPY price -> soyBenchmarkValue
-      // If resumeYear == startDate.year, checking 2025Data row 2 is correct.
-      // Assuming 'SPY_收盤' is in the header.
+      var startYear = parseInt(Constants.START_DATE.split('-')[0]);
+      if (resumeYear === startYear) {
+         ctx.soyBenchmarkValue = Constants.INITIAL_CAPITAL;
+         Logger.log('Resumed SOY Benchmark Value for ' + resumeYear + ' (Start Year): ' + ctx.soyBenchmarkValue);
+         return;
+      }
       
-      var s = ctx.ss.getSheetByName(resumeYear + 'Data');
-      if (!s || s.getLastRow() < 2) return; // Can't assist
+      // Benchmark: We want the value at the end of the previous year
+      var prevYear = resumeYear - 1;
+      var sPrev = ctx.ss.getSheetByName(prevYear + 'Data');
+      var spyPrice = 0;
       
-      // Read Header and First Data Row
-      var vals = s.getRange(1, 1, 2, s.getLastColumn()).getValues();
-      var headers = vals[0];
-      var firstRow = vals[1]; // Jan 1st (or 2nd)
-      
-      var spyIdx = headers.indexOf(Constants.BENCHMARK + '_收盤');
-      if (spyIdx > -1) {
-         var spyPrice = firstRow[spyIdx];
-         if (spyPrice > 0 && ctx.benchmarkUnits > 0) {
-            ctx.soyBenchmarkValue = ctx.benchmarkUnits * spyPrice;
-            // Also update soyPortfolioValue if possible? 
-            // Harder because we don't have historical portfolio value in Data sheet.
-            // We can try to read from DailyLog's last end-of-year?
-            // User only asked about Benchmark YTD (554%).
-            // Let's fix Benchmark first.
-            Logger.log('Resumed SOY Benchmark Value for ' + resumeYear + ': ' + ctx.soyBenchmarkValue);
+      if (sPrev && sPrev.getLastRow() > 1) {
+         var vals = sPrev.getRange(sPrev.getLastRow(), 1, 1, sPrev.getLastColumn()).getValues()[0];
+         var headers = sPrev.getRange(1, 1, 1, sPrev.getLastColumn()).getValues()[0];
+         var spyIdx = headers.indexOf(Constants.BENCHMARK + '_收盤');
+         if (spyIdx > -1) {
+            spyPrice = vals[spyIdx];
          }
+      }
+      
+      // Fallback: If previous year sheet doesn't exist or is empty, use the first day of the current year
+      if (spyPrice <= 0) {
+         var sCurr = ctx.ss.getSheetByName(resumeYear + 'Data');
+         if (sCurr && sCurr.getLastRow() > 1) {
+            var vals = sCurr.getRange(2, 1, 1, sCurr.getLastColumn()).getValues()[0];
+            var headers = sCurr.getRange(1, 1, 1, sCurr.getLastColumn()).getValues()[0];
+            var spyIdx = headers.indexOf(Constants.BENCHMARK + '_收盤');
+            if (spyIdx > -1) {
+               spyPrice = vals[spyIdx];
+            }
+         }
+      }
+      
+      if (spyPrice > 0 && ctx.benchmarkUnits > 0) {
+         ctx.soyBenchmarkValue = ctx.benchmarkUnits * spyPrice;
+         Logger.log('Resumed SOY Benchmark Value for ' + resumeYear + ': ' + ctx.soyBenchmarkValue + ' (Ref Price: ' + spyPrice + ')');
       }
   },
   
@@ -260,33 +285,33 @@ var RebalanceController = {
   },
   
   _initBenchmarkUnits: function(ctx) {
-     var startYear = Constants.START_DATE.split('-')[0];
-     var s = ctx.ss.getSheetByName(startYear + 'Data');
-     if (!s) {
-        // Fallback: Try current year context or search 
-        if (ctx.years && ctx.years.length > 0) {
-            s = ctx.ss.getSheetByName(ctx.years[0] + 'Data');
-        } else {
-            s = ctx.ss.getSheetByName(ctx.startDate.getFullYear() + 'Data');
-        }
-     }
-     
-     if (s && s.getLastRow() > 1) {
-         var h = s.getRange(1,1,1,s.getLastColumn()).getValues()[0];
-         var vals = s.getRange(2,1,1,s.getLastColumn()).getValues()[0];
-         
-         var idx = h.indexOf(Constants.BENCHMARK + '_收盤');
-         if (idx === -1) idx = h.indexOf(Constants.BENCHMARK + '_Close');
-         if (idx === -1) idx = h.indexOf(Constants.BENCHMARK + '.Close');
-         
-         if (idx > -1) {
-            var price = vals[idx];
-            if (price > 0) {
-               ctx.benchmarkUnits = Constants.INITIAL_CAPITAL / price;
-               Logger.log('Set Benchmark Units: ' + ctx.benchmarkUnits.toFixed(4) + ' (Ref Price: ' + price + ')');
-            }
-         }
-     }
+      var startDateStr = Constants.START_DATE; // '2010-06-29'
+      var startYear = startDateStr.split('-')[0];
+      var s = ctx.ss.getSheetByName(startYear + 'Data');
+      if (s && s.getLastRow() > 1) {
+          var vals = s.getDataRange().getValues();
+          var headers = vals[0];
+          var spyIdx = headers.indexOf(Constants.BENCHMARK + '_收盤');
+          if (spyIdx === -1) spyIdx = headers.indexOf(Constants.BENCHMARK + '_Close');
+          if (spyIdx === -1) spyIdx = headers.indexOf(Constants.BENCHMARK + '.Close');
+          
+          if (spyIdx > -1) {
+             // Find row with date matching startDateStr
+             for (var i = 1; i < vals.length; i++) {
+                var rowDate = vals[i][0];
+                var rowDateStr = (rowDate instanceof Date) ? rowDate.toISOString().split('T')[0] : String(rowDate);
+                if (rowDateStr.indexOf(startDateStr) === 0) {
+                   var price = vals[i][spyIdx];
+                   if (price > 0) {
+                      ctx.benchmarkUnits = Constants.INITIAL_CAPITAL / price;
+                      Logger.log('Set Benchmark Units (Resume): ' + ctx.benchmarkUnits.toFixed(4) + ' (Ref Price: ' + price + ' on ' + startDateStr + ')');
+                      return;
+                   }
+                }
+             }
+          }
+      }
+      Logger.log('Warning: could not find benchmark price on ' + startDateStr + ' during resume.');
   },
 
   _initializeContext: function() {
